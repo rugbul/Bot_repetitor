@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strconv"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -15,7 +16,7 @@ var (
 	userAnswers    = make(map[int64][]int)                            // Ответы пользователей
 
 	// Ссылки на видео из VK Cloud
-	welcomeVideoURL = "https://my-video-bucket.hb.ru-msk.vkcloud-storage.ru/%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82.mp4"
+	welcomeVideoURL = "https://my-video-bucket.hb.ru-msk.vkcloud-storage.ru/%D0%A1%D0%B0%D1%88%D0%BA%D0%B0%20%D0%BF%D1%80%D0%BE%D1%81%D0%B8%D1%82%20%D0%BF%D0%BE%D0%BC%D0%BE%D1%87%D1%8C%20%D0%B1%D0%B5%D0%B7%20%D0%BF%D1%80%D0%B8%D0%B3%D0%BB%D0%B0%D1%88%D0%B5%D0%BD%D0%B8%D1%8F.mp4"
 	videoURLs       = []string{
 		"https://my-video-bucket.hb.ru-msk.vkcloud-storage.ru/%D1%83%D0%BF%D0%B0%D0%BB%20%D0%BA%D1%80%D0%BE%D0%B2%D0%BE%D1%82%D0%BE%D1%87.mp4",
 		"https://my-video-bucket.hb.ru-msk.vkcloud-storage.ru/10%20%D0%9F%D0%BE%D0%B4%D0%B0%D0%B2%D0%B8%D0%BB%D1%81%D1%8F.mp4",
@@ -76,12 +77,29 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	chatID := message.Chat.ID
 
 	if message.Text == "/start" {
-		sendWelcomeVideo(bot, chatID)
+		sendWelcomeVideo(bot, chatID) // Отправляем приветственное видео
 	} else {
 		// Обработка ответов на вопросы
 		if len(userAnswers[chatID]) < len(correctAnswers) {
-			processAnswer(bot, chatID, message.Text)
+			// Проверяем, что ответ является цифрой от 1 до 4
+			if isValidAnswer(message.Text) {
+				processAnswer(bot, chatID, message.Text)
+			} else {
+				// Если ответ некорректный, отправляем сообщение
+				msg := tgbotapi.NewMessage(chatID, "Неправильная команда. Попробуйте снова.")
+				bot.Send(msg)
+			}
 		}
+	}
+}
+
+// Проверка, что ответ является цифрой от 1 до 4
+func isValidAnswer(answer string) bool {
+	switch answer {
+	case "1", "2", "3", "4":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -109,7 +127,6 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQ
 
 	switch callbackQuery.Data {
 	case "check_subscription":
-		// Получаем ID каналов по их username
 		channel1ID, err := getChatIDByUsername(bot, channel1)
 		if err != nil {
 			log.Println("Ошибка при получении ID канала 1: ", err)
@@ -126,7 +143,6 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQ
 			return
 		}
 
-		// Проверяем подписку на каналы
 		isSubscribed, err := checkSubscription(bot, chatID, channel1ID, channel2ID)
 		if err != nil {
 			log.Println("Ошибка при проверке подписки: ", err)
@@ -143,10 +159,9 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQ
 				),
 			)
 			bot.Send(msg)
-			return // Прерываем выполнение, если пользователь не подписан
+			return
 		}
 
-		// Если подписка подтверждена, начинаем тест
 		msg := tgbotapi.NewMessage(chatID, "Отлично, тогда давай начнем! Выбирай правильный ответ и вписывай его цифрой.")
 		_, err = bot.Send(msg)
 		if err != nil {
@@ -154,10 +169,8 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQ
 			return
 		}
 
-		// Ждем 2 секунды перед отправкой видео
 		time.Sleep(2 * time.Second)
 
-		// Отправляем первое видео
 		video := tgbotapi.NewVideo(chatID, tgbotapi.FileURL(videoURLs[0]))
 		_, err = bot.Send(video)
 		if err != nil {
@@ -165,7 +178,6 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQ
 			return
 		}
 
-		// Начинаем тест
 		userStep[chatID] = 0
 		userQuestionStep[chatID] = 0
 		sendNextQuestion(bot, chatID)
@@ -291,18 +303,26 @@ func sendFinalMessage(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	var finalMessage string
-	if correctCount == len(correctAnswers) {
-		finalMessage = "Молодец! Ты ответил на все правильно. Запишись на курс по первой помощи, будешь знать еще больше."
-	} else if correctCount >= len(correctAnswers)/2 {
-		finalMessage = "Молодец! Ты почти на все правильно ответил, у тебя уже есть знания, приходи на курс и будешь уметь знать всё."
-	} else {
-		finalMessage = "Меньше половины правильно, но не беда! приходи на курс и всему научишься."
+	// Сообщение с количеством правильных ответов
+	resultMessage := tgbotapi.NewMessage(chatID, "Правильно "+strconv.Itoa(correctCount)+" из 6.")
+	_, err := bot.Send(resultMessage)
+	if err != nil {
+		log.Println("Ошибка при отправке результата: ", err)
 	}
 
-	finalMessage += "\nЗаписаться на курс: @JuliaGorodovikova"
+	// Итоговое сообщение
+	var finalMessage string
+	if correctCount == len(correctAnswers) {
+		finalMessage = "Ты просто профи! Приглашаю на курс: \"Первая помощь с Сашкой\" для детей 6-12 лет."
+	} else if correctCount >= len(correctAnswers)/2 {
+		finalMessage = "Молодец, ты много знаешь. Приглашаю на курс: \"Первая помощь с Сашкой\" для детей 6-12 лет."
+	} else {
+		finalMessage = "Не беда, главное начало. Приглашаю на курс: \"Первая помощь с Сашкой\" для детей 6-12 лет."
+	}
+
+	finalMessage += "\nПодробности и ссылка на меня: @JuliaGorodovikova"
 	msg := tgbotapi.NewMessage(chatID, finalMessage)
-	_, err := bot.Send(msg)
+	_, err = bot.Send(msg)
 	if err != nil {
 		log.Println("Ошибка при отправке итогового сообщения: ", err)
 	}
